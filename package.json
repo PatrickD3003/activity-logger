@@ -13,11 +13,13 @@
     "@aws-sdk/client-dynamodb": "^3.583.0",
     "@aws-sdk/lib-dynamodb": "^3.583.0",
     "next": "^14.2.3",
+    "pg": "^8.21.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },
   "devDependencies": {
     "@types/node": "^20.12.12",
+    "@types/pg": "^8.20.0",
     "@types/react": "^18.3.2",
     "@types/react-dom": "^18.3.0",
     "autoprefixer": "^10.4.19",

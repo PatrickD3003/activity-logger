@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireSimpleAuth } from "@/lib/auth";
-import { isDynamoConfigured, listLogs, putLog } from "@/lib/dynamodb";
+import { getLogStorageName, isServerLogStorageConfigured, listLogs, putLog } from "@/lib/logRepository";
 
 export async function GET(request: NextRequest) {
-  if (!isDynamoConfigured()) {
-    return NextResponse.json({ logs: [], storage: "local", message: "DynamoDB is not configured" });
+  if (!isServerLogStorageConfigured()) {
+    return NextResponse.json({ logs: [], storage: "local", message: "Server log storage is not configured" });
   }
 
   const { searchParams } = new URL(request.url);
@@ -16,7 +16,7 @@ export async function GET(request: NextRequest) {
     sessionId: searchParams.get("sessionId") ?? undefined
   });
 
-  return NextResponse.json({ logs, storage: "dynamodb" });
+  return NextResponse.json({ logs, storage: getLogStorageName() });
 }
 
 export async function POST(request: NextRequest) {
@@ -29,10 +29,10 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "sessionId, activityCode, and startTime are required" }, { status: 400 });
   }
 
-  if (!isDynamoConfigured()) {
-    return NextResponse.json({ log: payload, storage: "local", message: "DynamoDB is not configured" }, { status: 202 });
+  if (!isServerLogStorageConfigured()) {
+    return NextResponse.json({ log: payload, storage: "local", message: "Server log storage is not configured" }, { status: 202 });
   }
 
   const log = await putLog(payload);
-  return NextResponse.json({ log, storage: "dynamodb" }, { status: 201 });
+  return NextResponse.json({ log, storage: getLogStorageName() }, { status: 201 });
 }

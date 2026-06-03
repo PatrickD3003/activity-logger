@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { requireSimpleAuth } from "@/lib/auth";
 import { logsToCsv } from "@/lib/csv";
-import { isDynamoConfigured, listLogs } from "@/lib/dynamodb";
+import { isServerLogStorageConfigured, listLogs } from "@/lib/logRepository";
 
 export const dynamic = "force-dynamic";
 
@@ -9,8 +9,8 @@ export async function GET(request: NextRequest) {
   const authError = requireSimpleAuth(request, "admin");
   if (authError) return authError;
 
-  if (!isDynamoConfigured()) {
-    return new NextResponse("DynamoDB is not configured. Use the in-app current session export for local logs.", {
+  if (!isServerLogStorageConfigured()) {
+    return new NextResponse("Server log storage is not configured. Use the in-app current session export for local logs.", {
       status: 202,
       headers: { "Content-Type": "text/plain" }
     });

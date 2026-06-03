@@ -16,7 +16,7 @@ Mobile-first Next.js PWA for factory machine and operator activity logging. Oper
 - Tapping a new activity closes the previous entry with `endTime` and `durationSeconds`
 - Current activity banner, summary cards, editable notes, and activity log
 - Current session CSV export from local browser storage
-- API routes for DynamoDB persistence and filtered CSV export
+- API routes for PostgreSQL on NAS or DynamoDB persistence and filtered CSV export
 - PWA manifest for installable mobile use
 
 ## Local Development
@@ -64,14 +64,90 @@ cp .env.example .env.local
 
 ```env
 NEXT_PUBLIC_APP_NAME="Factory Activity Logger"
+DATABASE_URL=""
+DATABASE_SSL="false"
 AWS_REGION="ap-southeast-1"
 DYNAMODB_LOGS_TABLE="FactoryActivityLogs"
 APP_AUTH_MODE="none"
+APP_BASIC_USERNAME=""
+APP_BASIC_PASSWORD=""
 APP_OPERATOR_PIN=""
 APP_ADMIN_PIN=""
 ```
 
-For local-only testing, leave `DYNAMODB_LOGS_TABLE` blank or omit it.
+For NAS deployment, set `DATABASE_URL` and leave `DYNAMODB_LOGS_TABLE` blank. For local-only testing, leave both `DATABASE_URL` and `DYNAMODB_LOGS_TABLE` blank.
+
+## NAS Deployment With Docker
+
+The app can run on a NAS or physical server with Docker Compose and PostgreSQL.
+
+For the full Synology NAS + Cloudflare Tunnel process, see:
+
+```text
+NAS_CLOUDFLARE_DEPLOYMENT.md
+```
+
+1. Copy the project to the server.
+2. Edit `docker-compose.yml` and replace `change-this-password`.
+3. Start the stack:
+
+```bash
+docker compose up -d --build
+```
+
+4. Open:
+
+```text
+http://SERVER_IP:3000
+```
+
+The included PostgreSQL container automatically creates the database schema from:
+
+```text
+database/postgres-schema.sql
+```
+
+For an existing PostgreSQL database, create the schema manually:
+
+```bash
+psql "$DATABASE_URL" -f database/postgres-schema.sql
+```
+
+Then run the app with:
+
+```bash
+DATABASE_URL="postgresql://factory_logger:password@localhost:5432/factory_logger" npm run start
+```
+
+Recommended production path on the NAS:
+
+- Run the app and PostgreSQL with Docker Compose
+- Put Nginx or the NAS reverse proxy in front of port `3000`
+- Use HTTPS if phones access it through a hostname
+- Back up the PostgreSQL volume regularly
+
+## PostgreSQL Schema
+
+The NAS/PostgreSQL backend uses one table:
+
+```sql
+activity_logs (
+  log_id TEXT PRIMARY KEY,
+  session_id TEXT NOT NULL,
+  division TEXT NOT NULL,
+  operator_name TEXT NOT NULL,
+  machine_number TEXT NOT NULL,
+  activity_code TEXT NOT NULL,
+  activity_name TEXT NOT NULL,
+  start_time TIMESTAMPTZ NOT NULL,
+  end_time TIMESTAMPTZ,
+  duration_seconds INTEGER,
+  note TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL,
+  created_by TEXT NOT NULL
+)
+```
 
 ## DynamoDB Schema
 
@@ -142,7 +218,7 @@ aws dynamodb update-table \
 
 ### `GET /api/logs`
 
-Returns logs from DynamoDB when configured.
+Returns logs from PostgreSQL or DynamoDB when configured.
 
 Query filters:
 
@@ -157,7 +233,7 @@ Response:
 ```json
 {
   "logs": [],
-  "storage": "dynamodb"
+  "storage": "postgres"
 }
 ```
 
@@ -195,11 +271,11 @@ Deletes a log entry. The local app also uses this for accidental tap correction.
 
 ### `GET /api/sessions/:sessionId/logs`
 
-Returns all logs for a session using the `sessionId-startTime-index` GSI.
+Returns all logs for a session. PostgreSQL uses the `activity_logs_session_start_idx` index; DynamoDB uses the `sessionId-startTime-index` GSI.
 
 ### `GET /api/logs/export`
 
-Exports a DynamoDB-backed CSV.
+Exports a PostgreSQL or DynamoDB-backed CSV.
 
 Supported query filters match `GET /api/logs`.
 
@@ -244,7 +320,17 @@ Replace `REGION` and `ACCOUNT_ID`.
 
 ## Auth Notes
 
-Default auth mode is `none`. A simple API PIN mode is included for small deployments:
+Default auth mode is `none`. For small private deployments, use Basic Auth to protect the whole app:
+
+```env
+APP_AUTH_MODE="basic"
+APP_BASIC_USERNAME="admin"
+APP_BASIC_PASSWORD="change-this-long-password"
+```
+
+Basic Auth blocks the app UI and API until the browser provides the configured username and password. Use HTTPS before exposing this publicly.
+
+A simple API PIN mode is also included for deployments that call the API directly:
 
 ```env
 APP_AUTH_MODE="simple"

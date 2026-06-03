@@ -1,11 +1,11 @@
 import { NextResponse } from "next/server";
-import { isDynamoConfigured, listLogs } from "@/lib/dynamodb";
+import { getLogStorageName, isServerLogStorageConfigured, listLogs } from "@/lib/logRepository";
 
 export async function GET(_: Request, { params }: { params: { sessionId: string } }) {
-  if (!isDynamoConfigured()) {
-    return NextResponse.json({ logs: [], storage: "local", message: "DynamoDB is not configured" });
+  if (!isServerLogStorageConfigured()) {
+    return NextResponse.json({ logs: [], storage: "local", message: "Server log storage is not configured" });
   }
 
   const logs = await listLogs({ sessionId: params.sessionId });
-  return NextResponse.json({ logs, storage: "dynamodb" });
+  return NextResponse.json({ logs, storage: getLogStorageName() });
 }
