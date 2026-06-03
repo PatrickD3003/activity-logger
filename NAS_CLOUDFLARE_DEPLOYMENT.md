@@ -188,6 +188,10 @@ This gives two layers:
 Cloudflare Access login -> app Basic Auth -> Activity Logger
 ```
 
+## Shared Data Behavior
+
+The deployed app stores shared session metadata and activity logs in PostgreSQL. New devices load available sessions from the server and poll the active session logs every 5 seconds, so operators viewing the same session see the same progress. Browser localStorage is still used as a fallback cache when the server is unavailable.
+
 ## 6. Troubleshooting
 
 If a Docker port says it is already in use:

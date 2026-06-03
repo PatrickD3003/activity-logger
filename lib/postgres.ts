@@ -1,5 +1,5 @@
 import { Pool } from "pg";
-import type { ActivityLog, LogInput } from "@/lib/types";
+import type { ActivityLog, LogInput, SessionSetup } from "@/lib/types";
 
 const databaseUrl = process.env.DATABASE_URL;
 
@@ -21,6 +21,19 @@ type LogFilters = {
   operatorName?: string;
   machineNumber?: string;
   date?: string;
+};
+
+type SessionRow = {
+  session_id: string;
+  division: string;
+  operator_name: string;
+  operators: string[] | null;
+  machine_number: string;
+  shift_date: string | Date;
+  shift_name: string;
+  created_by: string;
+  created_at: string | Date;
+  updated_at: string | Date;
 };
 
 type LogRow = {
@@ -49,9 +62,96 @@ function requirePool() {
   return pool;
 }
 
+let sessionsTableReady: Promise<void> | undefined;
+
+async function ensureSessionsTable() {
+  const db = requirePool();
+  sessionsTableReady ??= db.query(
+    `CREATE TABLE IF NOT EXISTS activity_sessions (
+      session_id TEXT PRIMARY KEY,
+      division TEXT NOT NULL,
+      operator_name TEXT NOT NULL,
+      operators JSONB NOT NULL DEFAULT '[]'::jsonb,
+      machine_number TEXT NOT NULL,
+      shift_date DATE NOT NULL,
+      shift_name TEXT NOT NULL,
+      created_by TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL,
+      updated_at TIMESTAMPTZ NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS activity_sessions_filters_idx
+      ON activity_sessions (shift_date, division, machine_number);`
+  ).then(() => undefined);
+
+  return sessionsTableReady;
+}
+
 function toIso(value: string | Date | null) {
   if (!value) return undefined;
   return value instanceof Date ? value.toISOString() : new Date(value).toISOString();
+}
+
+function rowToSession(row: SessionRow): SessionSetup {
+  const operators = Array.isArray(row.operators) ? row.operators : [];
+
+  return {
+    sessionId: row.session_id,
+    division: row.division,
+    operatorName: row.operator_name,
+    operators: operators.length ? operators : [row.operator_name],
+    machineNumber: row.machine_number,
+    shiftDate: toIso(row.shift_date)?.slice(0, 10) ?? String(row.shift_date),
+    shiftName: row.shift_name,
+    createdBy: row.created_by
+  };
+}
+
+export async function putPostgresSession(session: SessionSetup) {
+  const db = requirePool();
+  await ensureSessionsTable();
+  const now = new Date().toISOString();
+  const operators = session.operators?.length ? session.operators : [session.operatorName];
+
+  await db.query(
+    `INSERT INTO activity_sessions (
+      session_id, division, operator_name, operators, machine_number,
+      shift_date, shift_name, created_by, created_at, updated_at
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+    ON CONFLICT (session_id) DO UPDATE SET
+      division = EXCLUDED.division,
+      operator_name = EXCLUDED.operator_name,
+      operators = EXCLUDED.operators,
+      machine_number = EXCLUDED.machine_number,
+      shift_date = EXCLUDED.shift_date,
+      shift_name = EXCLUDED.shift_name,
+      created_by = EXCLUDED.created_by,
+      updated_at = EXCLUDED.updated_at`,
+    [
+      session.sessionId,
+      session.division,
+      session.operatorName,
+      JSON.stringify(operators),
+      session.machineNumber,
+      session.shiftDate,
+      session.shiftName,
+      session.createdBy,
+      now,
+      now
+    ]
+  );
+
+  return session;
+}
+
+export async function listPostgresSessions() {
+  const db = requirePool();
+  await ensureSessionsTable();
+  const result = await db.query<SessionRow>(
+    "SELECT * FROM activity_sessions ORDER BY shift_date DESC, created_at DESC"
+  );
+
+  return result.rows.map(rowToSession);
 }
 
 function rowToLog(row: LogRow): ActivityLog {

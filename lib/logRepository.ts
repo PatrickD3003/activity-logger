@@ -2,6 +2,8 @@ import {
   deletePostgresLog,
   isPostgresConfigured,
   listPostgresLogs,
+  listPostgresSessions,
+  putPostgresSession,
   putPostgresLog,
   updatePostgresLog
 } from "@/lib/postgres";
@@ -12,7 +14,7 @@ import {
   putLog as putDynamoLog,
   updateLog as updateDynamoLog
 } from "@/lib/dynamodb";
-import type { ActivityLog, LogInput } from "@/lib/types";
+import type { ActivityLog, LogInput, SessionSetup } from "@/lib/types";
 
 export type LogPatch = Partial<Pick<ActivityLog, "note" | "operatorName" | "createdBy" | "updatedAt">> & {
   endTime?: string | null;
@@ -57,5 +59,15 @@ export async function deleteLog(logId: string) {
 export async function listLogs(filters: LogFilters) {
   if (isPostgresConfigured()) return listPostgresLogs(filters);
   if (isDynamoConfigured()) return listDynamoLogs(filters);
+  return [];
+}
+
+export async function putSession(session: SessionSetup) {
+  if (isPostgresConfigured()) return putPostgresSession(session);
+  return session;
+}
+
+export async function listSessions() {
+  if (isPostgresConfigured()) return listPostgresSessions();
   return [];
 }

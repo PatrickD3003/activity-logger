@@ -27,6 +27,31 @@ type LogPatch = Omit<Partial<ActivityLog>, "endTime" | "durationSeconds"> & {
   durationSeconds?: number | null;
 };
 
+function buildSessionFromLogs(sessionId: string, sessionLogs: ActivityLog[]): SessionSetup | undefined {
+  const sortedLogs = [...sessionLogs].sort((first, second) => new Date(first.startTime).getTime() - new Date(second.startTime).getTime());
+  const firstLog = sortedLogs[0];
+  if (!firstLog) return undefined;
+
+  const operators = Array.from(new Set(sortedLogs.map((log) => log.operatorName).filter(Boolean)));
+
+  return {
+    sessionId,
+    division: firstLog.division,
+    operatorName: operators[0] ?? firstLog.operatorName,
+    operators: operators.length ? operators : [firstLog.operatorName],
+    machineNumber: firstLog.machineNumber,
+    shiftDate: firstLog.startTime.slice(0, 10),
+    shiftName: "Shared session",
+    createdBy: firstLog.createdBy
+  };
+}
+
+function mergeSessions(localSessions: SessionSetup[], remoteSessions: SessionSetup[]) {
+  const sessionsById = new Map<string, SessionSetup>();
+  [...remoteSessions, ...localSessions].forEach((item) => sessionsById.set(item.sessionId, item));
+  return Array.from(sessionsById.values());
+}
+
 export default function Home() {
   const [currentSessionId, setCurrentSessionId] = useState("");
   const [session, setSession] = useState<SessionSetup>();
@@ -40,29 +65,57 @@ export default function Home() {
   const [nowIso, setNowIso] = useState(() => new Date().toISOString());
 
   useEffect(() => {
-    function hydrateFromUrl() {
+    async function hydrateFromUrl() {
       const sessionId = new URLSearchParams(window.location.search).get("session") ?? "";
-      const storedSession = sessionId ? loadSession(sessionId) : undefined;
+      const localSessions = loadSessions();
+      const remoteSessions = await loadRemoteSessions();
+      const nextSavedSessions = mergeSessions(localSessions, remoteSessions);
+      const remoteSession = remoteSessions.find((item) => item.sessionId === sessionId);
+      const storedSession = sessionId ? remoteSession ?? loadSession(sessionId) : undefined;
+      const remoteLogs = storedSession ? await loadRemoteLogs(storedSession.sessionId) : [];
+      const nextLogs = remoteLogs.length ? remoteLogs : storedSession ? loadLogs(storedSession.sessionId) : [];
+
+      if (storedSession) saveSession(storedSession);
       setCurrentSessionId(sessionId);
       setSession(storedSession);
-      setSavedSessions(loadSessions());
+      setSavedSessions(nextSavedSessions);
       setSelectedOperator(storedSession?.operators?.[0] ?? storedSession?.operatorName ?? "");
-      setLogs(storedSession ? loadLogs(storedSession.sessionId) : []);
+      setLogs(nextLogs);
       setShowActivityManager(false);
       setRenameOperatorMode(false);
     }
 
     setActivityCatalog(loadActivityCatalog());
-    hydrateFromUrl();
+    void hydrateFromUrl();
     setMounted(true);
-    window.addEventListener("popstate", hydrateFromUrl);
-    return () => window.removeEventListener("popstate", hydrateFromUrl);
+    const handlePopState = () => void hydrateFromUrl();
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
   }, []);
 
   useEffect(() => {
     if (!mounted || !currentSessionId) return;
     saveLogs(logs, currentSessionId);
   }, [currentSessionId, logs, mounted]);
+
+  useEffect(() => {
+    if (!mounted || !currentSessionId) return;
+
+    const timer = window.setInterval(async () => {
+      const remoteSessions = await loadRemoteSessions();
+      const remoteSession = remoteSessions.find((item) => item.sessionId === currentSessionId);
+      if (remoteSession) {
+        setSession(remoteSession);
+        saveSession(remoteSession);
+        setSavedSessions(mergeSessions(loadSessions(), remoteSessions));
+      }
+
+      const remoteLogs = await loadRemoteLogs(currentSessionId);
+      if (remoteLogs.length) setLogs(remoteLogs);
+    }, 5000);
+
+    return () => window.clearInterval(timer);
+  }, [currentSessionId, mounted]);
 
   const divisions = useMemo(() => getDivisions(activityCatalog), [activityCatalog]);
   const sessionActivities = useMemo(
@@ -110,18 +163,22 @@ export default function Home() {
     setCurrentSessionId(normalizedSession.sessionId);
     setLogs([]);
     saveSession(normalizedSession);
+    syncSession(normalizedSession);
     saveLogs([], normalizedSession.sessionId);
     setSavedSessions(loadSessions());
     window.history.pushState({}, "", `/?session=${encodeURIComponent(normalizedSession.sessionId)}`);
   }
 
-  function openSession(sessionId: string) {
-    const nextSession = loadSession(sessionId);
+  async function openSession(sessionId: string) {
+    const remoteLogs = await loadRemoteLogs(sessionId);
+    const remoteSession = buildSessionFromLogs(sessionId, remoteLogs);
+    const nextSession = remoteSession ?? loadSession(sessionId);
     if (!nextSession) return;
     setCurrentSessionId(sessionId);
     setSession(nextSession);
     setSelectedOperator(nextSession.operators?.[0] ?? nextSession.operatorName);
-    setLogs(loadLogs(sessionId));
+    setLogs(remoteLogs.length ? remoteLogs : loadLogs(sessionId));
+    saveSession(nextSession);
     setShowActivityManager(false);
     window.history.pushState({}, "", `/?session=${encodeURIComponent(sessionId)}`);
   }
@@ -158,6 +215,7 @@ export default function Home() {
     setSession(nextSession);
     setSelectedOperator(cleanedName);
     saveSession(nextSession);
+    syncSession(nextSession);
     setSavedSessions(loadSessions());
   }
 
@@ -196,6 +254,7 @@ export default function Home() {
     setLogs(nextLogs);
     setSelectedOperator(selectedOperator === operatorName ? cleanedName : selectedOperator);
     saveSession(nextSession);
+    syncSession(nextSession);
     if (currentSessionId) saveLogs(nextLogs, currentSessionId);
     setSavedSessions(loadSessions());
     nextLogs
@@ -242,6 +301,18 @@ export default function Home() {
     return { nextLogs, closedLogs };
   }
 
+  async function syncSession(nextSession: SessionSetup) {
+    try {
+      await fetch("/api/sessions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(nextSession)
+      });
+    } catch {
+      // Session metadata remains local if the server is unavailable.
+    }
+  }
+
   async function syncLog(log: ActivityLog) {
     try {
       await fetch("/api/logs", {
@@ -251,6 +322,44 @@ export default function Home() {
       });
     } catch {
       // Local logging remains the source of truth when offline or AWS is not configured.
+    }
+  }
+
+  async function loadRemoteLogs(sessionId: string) {
+    try {
+      const response = await fetch("/api/sessions/" + encodeURIComponent(sessionId) + "/logs", { cache: "no-store" });
+      if (!response.ok) return [];
+      const payload = (await response.json()) as { logs?: ActivityLog[] };
+      return payload.logs ?? [];
+    } catch {
+      return [];
+    }
+  }
+
+  async function loadRemoteSessions() {
+    try {
+      const response = await fetch("/api/sessions", { cache: "no-store" });
+      if (response.ok) {
+        const payload = (await response.json()) as { sessions?: SessionSetup[] };
+        if (payload.sessions?.length) return payload.sessions;
+      }
+
+      const logsResponse = await fetch("/api/logs", { cache: "no-store" });
+      if (!logsResponse.ok) return [];
+      const payload = (await logsResponse.json()) as { logs?: ActivityLog[] };
+      const logsBySession = new Map<string, ActivityLog[]>();
+
+      (payload.logs ?? []).forEach((log) => {
+        const sessionLogs = logsBySession.get(log.sessionId) ?? [];
+        sessionLogs.push(log);
+        logsBySession.set(log.sessionId, sessionLogs);
+      });
+
+      return Array.from(logsBySession.entries())
+        .map(([sessionId, sessionLogs]) => buildSessionFromLogs(sessionId, sessionLogs))
+        .filter((item): item is SessionSetup => Boolean(item));
+    } catch {
+      return [];
     }
   }
 
