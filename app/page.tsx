@@ -27,6 +27,12 @@ type LogPatch = Omit<Partial<ActivityLog>, "endTime" | "durationSeconds"> & {
   durationSeconds?: number | null;
 };
 
+type RemoteLogsResult = {
+  logs: ActivityLog[];
+  storage: string;
+  available: boolean;
+};
+
 function buildSessionFromLogs(sessionId: string, sessionLogs: ActivityLog[]): SessionSetup | undefined {
   const sortedLogs = [...sessionLogs].sort((first, second) => new Date(first.startTime).getTime() - new Date(second.startTime).getTime());
   const firstLog = sortedLogs[0];
@@ -72,8 +78,12 @@ export default function Home() {
       const nextSavedSessions = mergeSessions(localSessions, remoteSessions);
       const remoteSession = remoteSessions.find((item) => item.sessionId === sessionId);
       const storedSession = sessionId ? remoteSession ?? loadSession(sessionId) : undefined;
-      const remoteLogs = storedSession ? await loadRemoteLogs(storedSession.sessionId) : [];
-      const nextLogs = remoteLogs.length ? remoteLogs : storedSession ? loadLogs(storedSession.sessionId) : [];
+      const remoteLogs = storedSession ? await loadRemoteLogs(storedSession.sessionId) : undefined;
+      const nextLogs = remoteLogs?.available
+        ? remoteLogs.logs
+        : storedSession
+        ? loadLogs(storedSession.sessionId)
+        : [];
 
       if (storedSession) saveSession(storedSession);
       setCurrentSessionId(sessionId);
@@ -111,7 +121,7 @@ export default function Home() {
       }
 
       const remoteLogs = await loadRemoteLogs(currentSessionId);
-      if (remoteLogs.length) setLogs(remoteLogs);
+      if (remoteLogs.available) setLogs(remoteLogs.logs);
     }, 5000);
 
     return () => window.clearInterval(timer);
@@ -171,13 +181,13 @@ export default function Home() {
 
   async function openSession(sessionId: string) {
     const remoteLogs = await loadRemoteLogs(sessionId);
-    const remoteSession = buildSessionFromLogs(sessionId, remoteLogs);
+    const remoteSession = buildSessionFromLogs(sessionId, remoteLogs.logs);
     const nextSession = remoteSession ?? loadSession(sessionId);
     if (!nextSession) return;
     setCurrentSessionId(sessionId);
     setSession(nextSession);
     setSelectedOperator(nextSession.operators?.[0] ?? nextSession.operatorName);
-    setLogs(remoteLogs.length ? remoteLogs : loadLogs(sessionId));
+    setLogs(remoteLogs.available ? remoteLogs.logs : loadLogs(sessionId));
     saveSession(nextSession);
     setShowActivityManager(false);
     window.history.pushState({}, "", `/?session=${encodeURIComponent(sessionId)}`);
@@ -325,14 +335,29 @@ export default function Home() {
     }
   }
 
-  async function loadRemoteLogs(sessionId: string) {
+  async function loadRemoteLogs(sessionId: string): Promise<RemoteLogsResult> {
     try {
       const response = await fetch("/api/sessions/" + encodeURIComponent(sessionId) + "/logs", { cache: "no-store" });
-      if (!response.ok) return [];
-      const payload = (await response.json()) as { logs?: ActivityLog[] };
-      return payload.logs ?? [];
+      if (!response.ok) return { logs: [], storage: "local", available: false };
+      const payload = (await response.json()) as { logs?: ActivityLog[]; storage?: string };
+      const storage = payload.storage ?? "local";
+      return {
+        logs: payload.logs ?? [],
+        storage,
+        available: storage !== "local"
+      };
     } catch {
-      return [];
+      return { logs: [], storage: "local", available: false };
+    }
+  }
+
+  async function clearRemoteSession(sessionId: string) {
+    try {
+      await fetch("/api/sessions/" + encodeURIComponent(sessionId), {
+        method: "DELETE"
+      });
+    } catch {
+      // Local reset still completes when the server is unavailable.
     }
   }
 
@@ -478,6 +503,7 @@ export default function Home() {
     const confirmed = window.confirm("Clear the current session and all local activity logs?");
     if (!confirmed) return;
     if (currentSessionId) {
+      clearRemoteSession(currentSessionId);
       clearLogs(currentSessionId);
       clearSession(currentSessionId);
     }

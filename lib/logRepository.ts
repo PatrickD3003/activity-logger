@@ -1,4 +1,5 @@
 import {
+  deletePostgresSession,
   deletePostgresLog,
   isPostgresConfigured,
   listPostgresLogs,
@@ -54,6 +55,17 @@ export async function updateLog(logId: string, patch: LogPatch) {
 export async function deleteLog(logId: string) {
   if (isPostgresConfigured()) return deletePostgresLog(logId);
   if (isDynamoConfigured()) return deleteDynamoLog(logId);
+}
+
+export async function deleteLogsForSession(sessionId: string) {
+  const logs = await listLogs({ sessionId });
+  await Promise.all(logs.map((log) => deleteLog(log.logId)));
+  return logs.length;
+}
+
+export async function deleteSession(sessionId: string) {
+  if (isPostgresConfigured()) return deletePostgresSession(sessionId);
+  return undefined;
 }
 
 export async function listLogs(filters: LogFilters) {

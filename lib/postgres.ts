@@ -154,6 +154,12 @@ export async function listPostgresSessions() {
   return result.rows.map(rowToSession);
 }
 
+export async function deletePostgresSession(sessionId: string) {
+  const db = requirePool();
+  await ensureSessionsTable();
+  await db.query("DELETE FROM activity_sessions WHERE session_id = $1", [sessionId]);
+}
+
 function rowToLog(row: LogRow): ActivityLog {
   return {
     logId: row.log_id,
