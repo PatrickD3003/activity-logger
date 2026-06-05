@@ -19,6 +19,7 @@ const machineStatusActivities: ActivityDefinition[] = [
 ];
 
 const warpingOperatorActivities: ActivityDefinition[] = [
+  { id: "warping-idl", code: "IDL", name: "Idle", description: "Operator idle", kind: "operator", tone: "idle" },
   { id: "warping-bc", code: "BC", name: "Beam change", description: "Beam change", kind: "operator", tone: "work" },
   { id: "warping-cr", code: "CR", name: "Creel loading", description: "Creel loading", kind: "operator", tone: "work" },
   { id: "warping-bk", code: "BK", name: "Yarn breakage", description: "Yarn breakage", kind: "operator", tone: "stop" },
@@ -30,6 +31,7 @@ const warpingOperatorActivities: ActivityDefinition[] = [
 ];
 
 const indigoOperatorActivities: ActivityDefinition[] = [
+  { id: "indigo-idl", code: "IDL", name: "Idle", description: "Operator idle", kind: "operator", tone: "idle" },
   { id: "indigo-dy", code: "DY", name: "Dye bath check", description: "Dye bath check", kind: "operator", tone: "work" },
   { id: "indigo-ch", code: "CH", name: "Chemical dosing", description: "Chemical dosing", kind: "operator", tone: "work" },
   { id: "indigo-ox", code: "OX", name: "Oxidation check", description: "Oxidation check", kind: "operator", tone: "work" },

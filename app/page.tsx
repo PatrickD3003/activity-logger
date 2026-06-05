@@ -410,15 +410,10 @@ export default function Home() {
     }
   }
 
-  function tapActivity(code: string) {
-    if (!session || !selectedOperator) return;
-    const activity = sessionActivities.find((item) => item.code === code);
-    if (!activity) return;
+  function buildActivityLog(activity: (typeof sessionActivities)[number], now: string): ActivityLog | undefined {
+    if (!session || !selectedOperator) return undefined;
 
-    const now = new Date().toISOString();
-    const { nextLogs, closedLogs } = closeMatchingActiveLogs(activity.kind, now);
-
-    const newLog: ActivityLog = {
+    return {
       logId: crypto.randomUUID(),
       sessionId: session.sessionId,
       division: session.division,
@@ -432,6 +427,36 @@ export default function Home() {
       updatedAt: now,
       createdBy: selectedOperator
     };
+  }
+
+  function getIdleOperatorActivity() {
+    return sessionActivities.find((item) => item.kind === "operator" && item.code.toUpperCase() === "IDL");
+  }
+
+  function tapActivity(code: string) {
+    if (!session || !selectedOperator) return;
+    const activity = sessionActivities.find((item) => item.code === code);
+    if (!activity) return;
+
+    const now = new Date().toISOString();
+    const { nextLogs, closedLogs } = closeMatchingActiveLogs(activity.kind, now);
+    const isTogglingActiveOperatorActivity =
+      activity.kind === "operator" && activeOperatorLog?.activityCode === activity.code;
+    const idleActivity = isTogglingActiveOperatorActivity ? getIdleOperatorActivity() : undefined;
+    const shouldStartIdleActivity = Boolean(idleActivity && idleActivity.code !== activity.code);
+    const nextActivity =
+      isTogglingActiveOperatorActivity && shouldStartIdleActivity
+        ? idleActivity
+        : isTogglingActiveOperatorActivity
+        ? undefined
+        : activity;
+    const newLog = nextActivity ? buildActivityLog(nextActivity, now) : undefined;
+
+    if (!newLog) {
+      setLogs(nextLogs);
+      closedLogs.forEach((closedLog) => updateRemoteLog(closedLog.logId, closedLog));
+      return;
+    }
 
     setLogs([...nextLogs, newLog]);
     closedLogs.forEach((closedLog) => updateRemoteLog(closedLog.logId, closedLog));
@@ -586,7 +611,7 @@ export default function Home() {
 
         <SummaryCards logs={logs} nowIso={nowIso} />
 
-        <section className="grid gap-3 rounded-lg border border-line bg-panel p-4">
+        <section className="sticky top-2 z-20 grid gap-3 rounded-lg border border-line bg-panel p-4 shadow-2xl shadow-black/35">
           <div className="flex items-center justify-between gap-3">
             <div>
               <h2 className="text-sm font-semibold uppercase tracking-[0.16em] text-muted">Select operator</h2>
